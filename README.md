@@ -89,8 +89,8 @@ dependency-light. It needs a C compiler (Fyne uses OpenGL):
 
 ```
 cd gui
-go build .            # native C toolchain, or:
-CC="zig cc" go build .   # if you have Zig but no gcc/clang
+go build -ldflags -H=windowsgui .   # Windows: -H=windowsgui suppresses the console window
+CC="zig cc" go build .              # if you have Zig but no gcc/clang
 ```
 
 Prebuilt GUI binaries for Windows, macOS and Linux are in the

@@ -53,8 +53,10 @@ jobs:
         working-directory: gui
         shell: bash
         run: |
-          go build -trimpath -ldflags "-s -w -X main.version=${{ needs.version.outputs.value }}" \
-            -o "../astrogopng-gui${{ matrix.ext }}" .
+          LD="-s -w -X main.version=${{ needs.version.outputs.value }}"
+          # -H=windowsgui: no console window when the .exe is double-clicked.
+          [[ "${{ matrix.goos }}" == "windows" ]] && LD="$LD -H=windowsgui"
+          go build -trimpath -ldflags "$LD" -o "../astrogopng-gui${{ matrix.ext }}" .
       - name: Package
         shell: bash
         run: |
