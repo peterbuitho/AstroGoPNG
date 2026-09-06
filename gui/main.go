@@ -31,8 +31,8 @@ type ui struct {
 	recursive, overwrite               *widget.Check
 	pngOnly, resize4k, lookup          *widget.Check
 
-	files     []string
-	filesList *widget.List
+	files    []string
+	filesBox *fyne.Container
 
 	convertBtn *widget.Button
 	progress   *widget.ProgressBar
@@ -48,11 +48,17 @@ type ui struct {
 func main() {
 	a := app.NewWithID("io.github.peterbuitho.astrogopng")
 	w := a.NewWindow("AstroGoPNG " + version)
-	w.Resize(fyne.NewSize(800, 660))
+	w.Resize(fyne.NewSize(820, 720))
 
 	u := &ui{win: w}
 	u.build()
 	w.SetContent(u.root())
+
+	// Files / folders passed on the command line — Explorer's right-click
+	// verb / "Open with" launch us with the selected paths as arguments.
+	for _, arg := range os.Args[1:] {
+		u.addPath(arg)
+	}
 
 	w.SetOnDropped(func(_ fyne.Position, uris []fyne.URI) {
 		for _, uri := range uris {
@@ -61,8 +67,15 @@ func main() {
 	})
 
 	if shot := os.Getenv("ASTRO_SHOT"); shot != "" {
+		auto := os.Getenv("ASTRO_AUTOCONVERT") != ""
 		go func() {
-			time.Sleep(1500 * time.Millisecond)
+			if auto {
+				time.Sleep(400 * time.Millisecond)
+				fyne.DoAndWait(u.onConvert)
+				time.Sleep(6 * time.Second)
+			} else {
+				time.Sleep(1500 * time.Millisecond)
+			}
 			fyne.DoAndWait(func() {
 				img := w.Canvas().Capture()
 				if f, err := os.Create(shot); err == nil {
@@ -93,15 +106,7 @@ func (u *ui) build() {
 	u.lookup = widget.NewCheck("Stamp object name (SIMBAD lookup); off = file name", nil)
 	u.lookup.Checked = true
 
-	u.filesList = widget.NewList(
-		func() int { return len(u.files) },
-		func() fyne.CanvasObject { return widget.NewLabel("") },
-		func(i widget.ListItemID, o fyne.CanvasObject) {
-			if i < len(u.files) {
-				o.(*widget.Label).SetText(filepath.Base(u.files[i]))
-			}
-		},
-	)
+	u.filesBox = container.NewVBox()
 
 	u.progress = widget.NewProgressBar()
 	u.statusLbl = widget.NewLabel("")
@@ -159,35 +164,61 @@ func (u *ui) root() fyne.CanvasObject {
 	})
 	clearFiles := widget.NewButton("Clear", func() {
 		u.files = nil
-		u.filesList.Refresh()
+		u.refreshFiles()
 	})
+
+	checks := container.NewGridWithColumns(2,
+		u.recursive, u.overwrite, u.pngOnly, u.resize4k, u.lookup)
 
 	form := container.NewVBox(
 		widget.NewLabelWithStyle("XISF / FITS to PNG batch converter", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
 		labeledRow("Input folder", u.inputEntry, browseFolder(u.inputEntry)),
 		container.NewHBox(addFiles, clearFiles,
 			widget.NewLabelWithStyle("or drop files / a folder onto this window", fyne.TextAlignLeading, fyne.TextStyle{Italic: true})),
+		u.filesBox,
 		labeledRow("Output folder", u.outputEntry, browseFolder(u.outputEntry)),
 		labeledRow("Stamp font", u.fontEntry, browseFont),
-		u.recursive, u.overwrite, u.pngOnly, u.resize4k, u.lookup,
+		checks,
 	)
 	if s := shellSection(u); s != nil {
-		form.Add(widget.NewSeparator())
 		form.Add(s)
 	}
 
-	filesScroll := container.NewVScroll(u.filesList)
-	filesScroll.SetMinSize(fyne.NewSize(0, 88))
+	u.refreshFiles()
 
 	controls := container.NewVBox(
+		widget.NewSeparator(),
 		u.convertBtn,
 		u.progress,
 		u.statusLbl,
-		widget.NewSeparator(),
 	)
 
-	top := container.NewVBox(form, widget.NewLabel("Selected files"), filesScroll, controls)
-	return container.NewBorder(top, nil, nil, nil, u.logList)
+	logArea := container.NewBorder(
+		widget.NewLabelWithStyle("Log", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		nil, nil, nil,
+		u.logList, // widget.List scrolls itself
+	)
+
+	// Form at natural height on top, Convert / progress / status pinned at
+	// the bottom, the log fills everything in between and scrolls.
+	return container.NewBorder(form, controls, nil, nil, logArea)
+}
+
+func (u *ui) refreshFiles() {
+	u.filesBox.RemoveAll()
+	if len(u.files) == 0 {
+		u.filesBox.Refresh()
+		return
+	}
+	u.filesBox.Add(widget.NewLabelWithStyle(
+		fmt.Sprintf("%d file(s) selected:", len(u.files)),
+		fyne.TextAlignLeading, fyne.TextStyle{Italic: true}))
+	for _, f := range u.files {
+		l := widget.NewLabel("  " + filepath.Base(f))
+		l.TextStyle = fyne.TextStyle{Monospace: true}
+		u.filesBox.Add(l)
+	}
+	u.filesBox.Refresh()
 }
 
 func labeledRow(label string, entry *widget.Entry, browse *widget.Button) fyne.CanvasObject {
@@ -208,7 +239,7 @@ func (u *ui) addPath(p string) {
 		}
 	}
 	u.files = append(u.files, p)
-	u.filesList.Refresh()
+	u.refreshFiles()
 }
 
 func (u *ui) options() batch.Options {
