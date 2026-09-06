@@ -46,6 +46,18 @@ type ui struct {
 }
 
 func main() {
+	// Files / folders passed on the command line — Explorer's right-click
+	// verb / "Open with" launches one process per selected file.
+	initial := os.Args[1:]
+
+	// Single-instance: the first launch owns the window; every later launch
+	// hands it its paths and exits, so a multi-selection is one file list in
+	// one window.
+	ln, primary := claim(initial)
+	if !primary {
+		return
+	}
+
 	a := app.NewWithID("io.github.peterbuitho.astrogopng")
 	w := a.NewWindow("AstroGoPNG " + version)
 	w.Resize(fyne.NewSize(820, 720))
@@ -54,11 +66,18 @@ func main() {
 	u.build()
 	w.SetContent(u.root())
 
-	// Files / folders passed on the command line — Explorer's right-click
-	// verb / "Open with" launch us with the selected paths as arguments.
-	for _, arg := range os.Args[1:] {
+	for _, arg := range initial {
 		u.addPath(arg)
 	}
+
+	serve(ln, func(paths []string) {
+		fyne.Do(func() {
+			for _, p := range paths {
+				u.addPath(p)
+			}
+			w.RequestFocus()
+		})
+	})
 
 	w.SetOnDropped(func(_ fyne.Position, uris []fyne.URI) {
 		for _, uri := range uris {
