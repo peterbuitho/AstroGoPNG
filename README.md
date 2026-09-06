@@ -75,10 +75,32 @@ without byte-shuffle.
 3; `ROWORDER`. Not supported: images in extensions, tile-compressed `.fz`,
 `.fits.gz`.
 
+## Desktop GUI
+
+`AstroGoPNG` also ships a [Fyne](https://fyne.io) desktop app —
+`astrogopng-gui` — with the same engine: pick folders / drop files, set the
+options, hit **Convert**, and watch the parallel batch stream a log and
+progress bar. On Windows it can add a *"Convert to PNG with astrogopng"*
+Explorer right-click entry; on Linux it installs an *Open with* `.desktop`
+entry.
+
+The GUI is a **separate Go module** (`gui/`) so the CLI stays pure-Go and
+dependency-light. It needs a C compiler (Fyne uses OpenGL):
+
+```
+cd gui
+go build .            # native C toolchain, or:
+CC="zig cc" go build .   # if you have Zig but no gcc/clang
+```
+
+Prebuilt GUI binaries for Windows, macOS and Linux are in the
+[Releases](https://github.com/peterbuitho/AstroGoPNG/releases) alongside the
+CLI.
+
 ## Status
 
-The CLI is at feature parity with the original. The desktop GUI is not ported
-yet.
+Feature parity with the original for both the CLI and the GUI. Not yet ported:
+the single-instance file hand-off and the optional user-names file.
 
 ## Dependencies
 
