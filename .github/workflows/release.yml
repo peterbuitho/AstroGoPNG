@@ -1,6 +1,10 @@
-# Cross-compiles the astrogopng CLI for Windows, macOS (Intel + Apple Silicon)
-# and Linux (x86-64 + ARM64) from a single runner (pure Go, CGO_ENABLED=0) and
-# attaches the archives to a GitHub Release.
+# Builds the astrogopng CLI and GUI natively on Windows, macOS (Apple
+# Silicon) and Linux (x86-64 + ARM64), and attaches the archives to a GitHub
+# Release. Both now link astropng-core (github.com/peterbuitho/astropng-core,
+# pinned in third_party/astropng-core/VERSION) via cgo, which is why this
+# builds natively per target instead of cross-compiling the CLI from one
+# runner as before: cgo needs a real C/Rust toolchain for the target it's
+# building for.
 #
 # Push a tag like `v0.1.0`, or run the workflow manually.
 
@@ -28,8 +32,8 @@ jobs:
             echo "value=0.0.0-dev+${GITHUB_SHA::8}" >> "$GITHUB_OUTPUT"
           fi
 
-  gui:
-    name: GUI — ${{ matrix.name }}
+  build:
+    name: ${{ matrix.name }}
     needs: version
     strategy:
       fail-fast: false
@@ -37,6 +41,7 @@ jobs:
         include:
           - { name: windows-x86_64, os: windows-latest, goos: windows, ext: .exe }
           - { name: linux-x86_64, os: ubuntu-24.04, goos: linux, ext: "" }
+          - { name: linux-aarch64, os: ubuntu-24.04-arm, goos: linux, ext: "" }
           - { name: macos-arm64, os: macos-latest, goos: darwin, ext: "" }
     runs-on: ${{ matrix.os }}
     steps:
@@ -44,20 +49,38 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version: "1.27"
-      - name: Linux GUI deps
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Linux build dependencies
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends gcc libgl1-mesa-dev xorg-dev libwayland-dev libxkbcommon-dev wayland-protocols
+
+      - name: Build astropng-core
+        shell: bash
+        run: bash scripts/build-core.sh
+
+      - name: Build CLI
+        shell: bash
+        env:
+          CGO_ENABLED: "1"
+        run: |
+          go build -trimpath -ldflags "-s -w -X main.version=${{ needs.version.outputs.value }}" \
+            -o "astrogopng${{ matrix.ext }}" ./cmd/astrogopng
+
       - name: Build GUI
         working-directory: gui
         shell: bash
+        env:
+          CGO_ENABLED: "1"
         run: |
           LD="-s -w -X main.version=${{ needs.version.outputs.value }}"
           # No console window when the .exe is double-clicked. -H handles the
           # internal/MinGW linker; -extldflags forces it for other C linkers.
           [[ "${{ matrix.goos }}" == "windows" ]] && LD="$LD -H windowsgui -extldflags=-Wl,--subsystem,windows"
           go build -trimpath -ldflags "$LD" -o "../astrogopng-gui${{ matrix.ext }}" .
+
       - name: Package
         shell: bash
         run: |
@@ -88,73 +111,25 @@ jobs:
           </dict></plist>
           EOF
             codesign --force --deep --sign - "$app" || true
-            cp README.md dist/
-            (cd dist && zip -r -y "astrogopng-gui-macos-arm64.zip" AstroGoPNG.app README.md)
-            rm -rf dist/AstroGoPNG.app dist/README.md
+            cp README.md astrogopng dist/
+            (cd dist && zip -r -y "astrogopng-${{ matrix.name }}.zip" AstroGoPNG.app astrogopng README.md)
+            rm -rf dist/AstroGoPNG.app dist/astrogopng dist/README.md
           elif [[ "${{ matrix.goos }}" == "windows" ]]; then
-            7z a "dist/astrogopng-gui-${{ matrix.name }}.zip" astrogopng-gui.exe README.md
+            7z a "dist/astrogopng-${{ matrix.name }}.zip" astrogopng.exe astrogopng-gui.exe README.md
           else
-            tar -czf "dist/astrogopng-gui-${{ matrix.name }}.tar.gz" astrogopng-gui README.md
+            tar -czf "dist/astrogopng-${{ matrix.name }}.tar.gz" astrogopng astrogopng-gui README.md
           fi
-      - uses: actions/upload-artifact@v4
-        with:
-          name: gui-${{ matrix.name }}
-          path: dist/*
-          if-no-files-found: error
-
-  cli:
-    name: CLI — cross-compile all targets
-    needs: version
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-go@v6
-        with:
-          go-version: "1.27"
-
-      - name: Build + package all CLI targets
-        env:
-          VERSION: ${{ needs.version.outputs.value }}
-          CGO_ENABLED: "0"
-        run: |
-          set -euo pipefail
-          mkdir -p dist
-          declare -A NAMES=(
-            [windows/amd64]=windows-x86_64
-            [windows/arm64]=windows-aarch64
-            [linux/amd64]=linux-x86_64
-            [linux/arm64]=linux-aarch64
-            [darwin/amd64]=macos-x86_64
-            [darwin/arm64]=macos-aarch64
-          )
-          for t in "${!NAMES[@]}"; do
-            name="${NAMES[$t]}"
-            out="build/$name"
-            mkdir -p "$out"
-            bin="astrogopng"
-            [[ "$t" == windows/* ]] && bin="astrogopng.exe"
-            GOOS="${t%/*}" GOARCH="${t#*/}" go build -trimpath \
-              -ldflags "-s -w -X main.version=${VERSION}" \
-              -o "$out/$bin" ./cmd/astrogopng
-            cp README.md "$out/"
-            if [[ "$t" == windows/* ]]; then
-              (cd "$out" && zip -q "$GITHUB_WORKSPACE/dist/astrogopng-cli-$name.zip" "$bin" README.md)
-            else
-              tar -czf "dist/astrogopng-cli-$name.tar.gz" -C "$out" "$bin" README.md
-            fi
-          done
-          ls -la dist
 
       - uses: actions/upload-artifact@v4
         with:
-          name: cli
+          name: ${{ matrix.name }}
           path: dist/*
           if-no-files-found: error
 
   release:
     name: Publish GitHub Release
-    needs: [cli, gui]
-    if: ${{ always() && startsWith(github.ref, 'refs/tags/v') && needs.cli.result == 'success' }}
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/download-artifact@v4

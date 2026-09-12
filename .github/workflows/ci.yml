@@ -8,20 +8,19 @@ on:
 jobs:
   test:
     runs-on: ubuntu-24.04
+    env:
+      CGO_ENABLED: "1"
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v6
         with:
           go-version: "1.27"
+      - uses: dtolnay/rust-toolchain@stable
+      - run: bash scripts/build-core.sh
       - run: go vet ./...
       - run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
       - run: go test -race ./...
-      - name: Cross-compile every CLI target
-        run: |
-          for t in windows/amd64 windows/arm64 linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
-            GOOS=${t%/*} GOARCH=${t#*/} CGO_ENABLED=0 go build ./cmd/astrogopng
-            echo "built $t"
-          done
+      - run: go build ./cmd/astrogopng
 
   gui:
     strategy:
@@ -29,6 +28,8 @@ jobs:
       matrix:
         os: [ubuntu-24.04, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
+    env:
+      CGO_ENABLED: "1"
     defaults:
       run:
         working-directory: gui
@@ -37,12 +38,16 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version: "1.27"
+      - uses: dtolnay/rust-toolchain@stable
       - name: Linux GUI deps
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             gcc libgl1-mesa-dev xorg-dev libwayland-dev libxkbcommon-dev wayland-protocols
+      - name: Build astropng-core
+        working-directory: .
+        run: bash scripts/build-core.sh
       - run: gofmt -l . && test -z "$(gofmt -l .)"
       - run: go vet ./...
       - run: go build ./...

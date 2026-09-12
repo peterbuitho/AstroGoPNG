@@ -2,3 +2,4 @@
 /astrogopng
 /astrogopng-gui
 *.exe
+/third_party/astropng-core/lib/

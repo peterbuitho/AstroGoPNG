@@ -19,18 +19,23 @@ supported.
 
 ## Install / build
 
-Requires [Go 1.27+](https://go.dev/dl/). No C toolchain — everything is pure
-Go (`CGO_ENABLED=0`), so it cross-compiles to every desktop platform from one
-machine.
+Requires [Go 1.27+](https://go.dev/dl/) and a [Rust toolchain](https://rustup.rs)
+(to build [`astropng-core`](https://github.com/peterbuitho/astropng-core), the
+shared conversion pipeline this program links via cgo — see
+[Architecture](#architecture)).
 
 ```
-go build ./cmd/astrogopng          # -> ./astrogopng
-go install github.com/peterbuitho/AstroGoPNG/cmd/astrogopng@latest
-go test ./...
+make cli    # builds astropng-core, then ./astrogopng
+make gui    # builds astropng-core, then ./astrogopng-gui
+make test
 ```
 
-Prebuilt binaries for Windows, macOS (Intel + Apple Silicon) and Linux
-(x86-64 + ARM64) are attached to each
+(`make core` alone just builds `third_party/astropng-core/lib/libastropng_core.a`,
+if you want to run `go build`/`go test`/`go vet` directly afterwards with
+`CGO_ENABLED=1`.)
+
+Prebuilt binaries for Windows, Linux (x86-64 + ARM64) and macOS (Apple
+Silicon) are attached to each
 [GitHub Release](https://github.com/peterbuitho/AstroGoPNG/releases).
 
 ## Command line
@@ -84,13 +89,15 @@ progress bar. On Windows it can add a *"Convert to PNG with astrogopng"*
 Explorer right-click entry; on Linux it installs an *Open with* `.desktop`
 entry.
 
-The GUI is a **separate Go module** (`gui/`) so the CLI stays pure-Go and
-dependency-light. It needs a C compiler (Fyne uses OpenGL):
+The GUI is a **separate Go module** (`gui/`), kept separate from the CLI
+module for dependency isolation. It needs a C compiler (Fyne uses OpenGL, and
+now so does the shared core — see below):
 
 ```
+make core
 cd gui
 # Windows: no console window. -H handles MinGW; -extldflags forces it for zig cc.
-go build -ldflags "-H windowsgui -extldflags=-Wl,--subsystem,windows" .
+CGO_ENABLED=1 go build -ldflags "-H windowsgui -extldflags=-Wl,--subsystem,windows" .
 CC="zig cc" go build ...   # if you have Zig but no gcc/clang
 ```
 
@@ -103,16 +110,20 @@ CLI.
 Feature parity with the original for both the CLI and the GUI. Not yet ported:
 the single-instance file hand-off and the optional user-names file.
 
+## Architecture
+
+The conversion pipeline (XISF/FITS parsing, stretch, resize/stamp, WCS,
+SIMBAD lookup, batch orchestration) lives in
+[`astropng-core`](https://github.com/peterbuitho/astropng-core), a Rust
+library shared with this program's Rust/Nim/Zig/Scala ports. `internal/batch`
+is a thin [cgo](https://pkg.go.dev/cmd/cgo) wrapper around its C ABI — see
+`third_party/astropng-core/VERSION` for the pinned version and
+`scripts/build-core.sh` for how it's built. `cmd/astrogopng` and `gui/` are
+unaware of the swap; they only ever called `internal/batch`'s public API.
+
 ## Dependencies
 
-Almost everything is the Go standard library (`image/png`, `compress/zlib`,
-`encoding/xml`, `net/http`, …). External:
-
-| Module | Purpose |
-| --- | --- |
-| `github.com/klauspost/compress/zstd` | XISF zstd codec (pure Go) |
-| `golang.org/x/image` | Catmull-Rom resize, TrueType stamp rendering |
-| `golang.org/x/sync/singleflight` | collapse duplicate concurrent SIMBAD lookups |
-
-The stamp font, DejaVu Sans Condensed Bold, is embedded; its licence is in
-[`assets/fonts/LICENSE-DejaVu.txt`](assets/fonts/LICENSE-DejaVu.txt).
+Third-party Go dependencies: none (`go.mod` has no `require` block) — the CLI
+module is now just the standard library plus cgo into `astropng-core`. `gui/`
+is a separate module with its own dependencies (Fyne and its transitive
+tree), unaffected by this.
