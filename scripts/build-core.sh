@@ -24,15 +24,18 @@ fi
 # (MSVC naming/ABI) instead of libastropng_core.a. Build the GNU target
 # explicitly on Windows so the static lib matches what cgo expects.
 target_dir="target"
-target_flag=()
+target_flag=""
 if [[ "${OS:-}" == "Windows_NT" || "${RUNNER_OS:-}" == "Windows" ]]; then
     rustup target add x86_64-pc-windows-gnu
-    target_flag=(--target x86_64-pc-windows-gnu)
+    target_flag="--target x86_64-pc-windows-gnu"
     target_dir="target/x86_64-pc-windows-gnu"
 fi
 
 echo "Building astropng-core@$tag (release)"
-(cd "$cache_dir" && cargo build --release --lib "${target_flag[@]}")
+# Word-splitting $target_flag is intentional (it's a controlled, fixed
+# string); macOS's default bash (3.2) errors on referencing an empty array
+# under `set -u`, so a plain string is used instead of a bash array.
+(cd "$cache_dir" && cargo build --release --lib $target_flag)
 
 mkdir -p "$lib_dir"
 cp "$cache_dir/$target_dir/release/libastropng_core.a" "$lib_dir/"
