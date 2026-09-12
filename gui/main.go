@@ -17,6 +17,7 @@ import (
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/storage"
+	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
 	"github.com/peterbuitho/AstroGoPNG/internal/batch"
@@ -36,10 +37,10 @@ type ui struct {
 
 	convertBtn *widget.Button
 	progress   *widget.ProgressBar
-	statusLbl  *widget.Label
+	statusLbl  *widget.RichText
 
 	mu       sync.Mutex
-	logLines []string
+	logLines [][]widget.RichTextSegment
 	logList  *widget.List
 
 	cancel context.CancelFunc
@@ -128,7 +129,7 @@ func (u *ui) build() {
 	u.filesBox = container.NewVBox()
 
 	u.progress = widget.NewProgressBar()
-	u.statusLbl = widget.NewLabel("")
+	u.statusLbl = widget.NewRichText()
 	u.statusLbl.Wrapping = fyne.TextWrapWord
 	u.convertBtn = widget.NewButton("Convert", u.onConvert)
 	u.convertBtn.Importance = widget.HighImportance
@@ -136,15 +137,15 @@ func (u *ui) build() {
 	u.logList = widget.NewList(
 		func() int { u.mu.Lock(); defer u.mu.Unlock(); return len(u.logLines) },
 		func() fyne.CanvasObject {
-			l := widget.NewLabel("")
-			l.TextStyle = fyne.TextStyle{Monospace: true}
-			return l
+			return widget.NewRichText()
 		},
 		func(i widget.ListItemID, o fyne.CanvasObject) {
 			u.mu.Lock()
 			defer u.mu.Unlock()
 			if i < len(u.logLines) {
-				o.(*widget.Label).SetText(u.logLines[i])
+				rt := o.(*widget.RichText)
+				rt.Segments = u.logLines[i]
+				rt.Refresh()
 			}
 		},
 	)
@@ -287,7 +288,7 @@ func (u *ui) onConvert() {
 	u.mu.Unlock()
 	u.logList.Refresh()
 	u.progress.SetValue(0)
-	u.statusLbl.SetText("")
+	u.setStatus()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	u.cancel = cancel
@@ -315,44 +316,82 @@ func (u *ui) onConvert() {
 			u.progress.SetValue(1)
 			switch {
 			case err != nil:
-				u.statusLbl.SetText("Error: " + err.Error())
+				u.setStatus(plainSeg("Error: "+err.Error(), theme.ColorNameError))
 			case summary.Total == 0:
-				u.statusLbl.SetText("No " + opts.InputKind() + " files found.")
+				u.setStatus(plainSeg("No "+opts.InputKind()+" files found.", theme.ColorNameForeground))
 			default:
 				verb := "Converted"
 				if opts.PNGOnly {
 					verb = "Processed"
+				}
+				summaryColor := theme.ColorNameForeground
+				if summary.Failed > 0 {
+					summaryColor = theme.ColorNameError
 				}
 				s := fmt.Sprintf("%s: %d   Skipped: %d   Failed: %d",
 					verb, summary.Converted, summary.Skipped, summary.Failed)
 				if summary.Cancelled {
 					s += "   (cancelled)"
 				}
+				segments := []widget.RichTextSegment{plainSeg(s, summaryColor)}
 				for _, w := range summary.Warnings {
-					s += "\n⚠ " + w
+					segments = append(segments, plainSeg("\n⚠ "+w, theme.ColorNameWarning))
 				}
-				u.statusLbl.SetText(s)
+				u.setStatus(segments...)
 			}
 		})
 	}()
 }
 
-func formatProgress(p batch.Progress) []string {
-	var out []string
+// monoSeg/plainSeg are RichText segments colored by theme color name (so the
+// text reads correctly in both light and dark themes), monospace for the log
+// and proportional for the status line, matching each widget's prior style.
+func monoSeg(text string, colorName fyne.ThemeColorName) widget.RichTextSegment {
+	return &widget.TextSegment{
+		Text:  text,
+		Style: widget.RichTextStyle{ColorName: colorName, TextStyle: fyne.TextStyle{Monospace: true}},
+	}
+}
+
+func plainSeg(text string, colorName fyne.ThemeColorName) widget.RichTextSegment {
+	return &widget.TextSegment{Text: text, Style: widget.RichTextStyle{ColorName: colorName}}
+}
+
+func (u *ui) setStatus(segments ...widget.RichTextSegment) {
+	u.statusLbl.Segments = segments
+	u.statusLbl.Refresh()
+}
+
+func formatProgress(p batch.Progress) [][]widget.RichTextSegment {
+	var out [][]widget.RichTextSegment
 	switch p.Status {
 	case batch.StatusOK:
-		if p.Label != "" {
-			out = append(out, fmt.Sprintf("OK    %s  →  %s", p.Rel, p.Label))
-		} else {
-			out = append(out, "OK    "+p.Rel)
+		line := []widget.RichTextSegment{
+			monoSeg("OK    ", theme.ColorNameSuccess),
+			monoSeg(p.Rel, theme.ColorNameForeground),
 		}
+		if p.Label != "" {
+			line = append(line,
+				monoSeg("  →  ", theme.ColorNameForeground),
+				monoSeg(p.Label, theme.ColorNamePrimary))
+		}
+		out = append(out, line)
 	case batch.StatusSkipped:
-		out = append(out, "SKIP  "+p.Rel)
+		out = append(out, []widget.RichTextSegment{
+			monoSeg("SKIP  ", theme.ColorNameDisabled),
+			monoSeg(p.Rel, theme.ColorNameForeground),
+		})
 	case batch.StatusFailed:
-		out = append(out, fmt.Sprintf("ERROR %s: %s", p.Rel, p.Err))
+		out = append(out, []widget.RichTextSegment{
+			monoSeg("ERROR ", theme.ColorNameError),
+			monoSeg(p.Rel+": "+p.Err, theme.ColorNameError),
+		})
 	}
 	if p.Note != "" {
-		out = append(out, "      note: "+p.Note)
+		out = append(out, []widget.RichTextSegment{
+			monoSeg("      note: ", theme.ColorNameForeground),
+			monoSeg(p.Note, theme.ColorNameWarning),
+		})
 	}
 	return out
 }
