@@ -11,7 +11,9 @@ package batch
 
 /*
 #cgo CFLAGS: -I${SRCDIR}/../../third_party/astropng-core/include
-#cgo LDFLAGS: -L${SRCDIR}/../../third_party/astropng-core/lib -lastropng_core -lpthread -ldl -lm
+#cgo LDFLAGS: -L${SRCDIR}/../../third_party/astropng-core/lib -lastropng_core
+#cgo linux darwin LDFLAGS: -lpthread -ldl -lm
+#cgo windows LDFLAGS: -lws2_32 -luserenv -lbcrypt -lntdll -ladvapi32
 #include <stdlib.h>
 #include "astropng_core.h"
 
