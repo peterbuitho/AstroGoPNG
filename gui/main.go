@@ -9,7 +9,6 @@ import (
 	"image/png"
 	"os"
 	"path/filepath"
-	"sync"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -39,9 +38,8 @@ type ui struct {
 	progress   *widget.ProgressBar
 	statusLbl  *widget.RichText
 
-	mu       sync.Mutex
-	logLines [][]widget.RichTextSegment
-	logList  *widget.List
+	logBox    *fyne.Container
+	logScroll *container.Scroll
 
 	cancel context.CancelFunc
 }
@@ -134,21 +132,12 @@ func (u *ui) build() {
 	u.convertBtn = widget.NewButton("Convert", u.onConvert)
 	u.convertBtn.Importance = widget.HighImportance
 
-	u.logList = widget.NewList(
-		func() int { u.mu.Lock(); defer u.mu.Unlock(); return len(u.logLines) },
-		func() fyne.CanvasObject {
-			return widget.NewRichText()
-		},
-		func(i widget.ListItemID, o fyne.CanvasObject) {
-			u.mu.Lock()
-			defer u.mu.Unlock()
-			if i < len(u.logLines) {
-				rt := o.(*widget.RichText)
-				rt.Segments = u.logLines[i]
-				rt.Refresh()
-			}
-		},
-	)
+	// A plain VBox of RichText rows, not widget.List: List caches a single
+	// fixed row height from its (empty) template item, so real multi-color
+	// content of varying width/height overlaps between rows. Every row here
+	// sizes itself naturally instead.
+	u.logBox = container.NewVBox()
+	u.logScroll = container.NewVScroll(u.logBox)
 }
 
 func (u *ui) root() fyne.CanvasObject {
@@ -216,7 +205,7 @@ func (u *ui) root() fyne.CanvasObject {
 	logArea := container.NewBorder(
 		widget.NewLabelWithStyle("Log", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
 		nil, nil, nil,
-		u.logList, // widget.List scrolls itself
+		u.logScroll,
 	)
 
 	// Form at natural height on top, Convert / progress / status pinned at
@@ -283,10 +272,7 @@ func (u *ui) onConvert() {
 	}
 	opts := u.options()
 
-	u.mu.Lock()
-	u.logLines = nil
-	u.mu.Unlock()
-	u.logList.Refresh()
+	u.logBox.RemoveAll()
 	u.progress.SetValue(0)
 	u.setStatus()
 
@@ -297,17 +283,16 @@ func (u *ui) onConvert() {
 	go func() {
 		summary, err := batch.Run(ctx, opts, func(p batch.Progress) {
 			lines := formatProgress(p)
-			u.mu.Lock()
-			u.logLines = append(u.logLines, lines...)
-			u.mu.Unlock()
 			frac := 0.0
 			if p.Total > 0 {
 				frac = float64(p.Index) / float64(p.Total)
 			}
 			fyne.Do(func() {
+				for _, segs := range lines {
+					u.logBox.Add(widget.NewRichText(segs...))
+				}
 				u.progress.SetValue(frac)
-				u.logList.Refresh()
-				u.logList.ScrollToBottom()
+				u.logScroll.ScrollToBottom()
 			})
 		})
 		fyne.Do(func() {
