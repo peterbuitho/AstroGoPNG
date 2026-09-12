@@ -120,6 +120,36 @@ jobs:
             tar -czf "dist/astrogopng-${{ matrix.name }}.tar.gz" astrogopng astrogopng-gui README.md
           fi
 
+      - name: Build AppImage
+        if: matrix.name == 'linux-x86_64'
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL -o /tmp/appimagetool "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage"
+          curl -fsSL -o /tmp/linuxdeploy "https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage"
+          chmod +x /tmp/appimagetool /tmp/linuxdeploy
+
+          appdir="$(mktemp -d)/AppDir"
+          mkdir -p "$appdir/usr/bin"
+          cp astrogopng-gui "$appdir/usr/bin/astrogopng-gui"
+          cp assets/icon-256.png "$appdir/astrogopng.png"
+          cat > "$appdir/astrogopng-gui.desktop" <<EOF
+          [Desktop Entry]
+          Type=Application
+          Name=AstroGoPNG
+          Exec=astrogopng-gui
+          Icon=astrogopng
+          Categories=Graphics;
+          EOF
+
+          # No FUSE on GitHub-hosted runners; these tools extract-and-run themselves instead of mounting.
+          /tmp/linuxdeploy --appimage-extract-and-run \
+            --appdir "$appdir" \
+            --executable "$appdir/usr/bin/astrogopng-gui" \
+            --desktop-file "$appdir/astrogopng-gui.desktop" \
+            --icon-file "$appdir/astrogopng.png"
+          /tmp/appimagetool --appimage-extract-and-run "$appdir" "dist/astrogopng-gui-${{ matrix.name }}.AppImage"
+
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.name }}
